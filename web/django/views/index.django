@@ -1,0 +1,5 @@
+{% include "partials/header.django" %}
+
+<h1>{{ Title }}</h1>
+
+{% include "partials/footer.django" %}
