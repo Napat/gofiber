@@ -9,5 +9,6 @@ require (
 	github.com/gofiber/fiber/v2 v2.7.1
 	github.com/gofiber/jwt/v2 v2.2.1
 	github.com/gofiber/template v1.6.8
+	github.com/gojektech/heimdall/v6 v6.1.0
 	golang.org/x/tools v0.1.0 // indirect
 )

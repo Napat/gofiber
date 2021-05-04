@@ -2,6 +2,7 @@ package fiberserver
 
 import (
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -102,6 +103,20 @@ func (h *Handler) initMiddleware() (err error) {
 	// Internal middleware: cache https://github.com/gofiber/fiber#-internal-middleware
 	// curl -v http://127.0.0.1:3000/api/v2/greets
 	// curl -v http://127.0.0.1:3000/api/v2/greets?refresh=true
+	//
+	// **Warning**
+	// Use "Middleware CACHE" with some CAUTION,
+	// Using this middleware *with refresh behavior* can cause concurrency issues if your endpoint handler is a slow task,
+	// When handler receives the first request with refresh behavior and is still processing.
+	// If the second or the third requests come through this period,
+	// the **middleware cache** will block any subsequent requests until the first one is complete.
+	// Even you don't use the refresh query flag, they alway block.
+	// In my opinion, this is middleware behavior issue.
+	// Because it should run at least the same speed before having it(no blocking).
+	// Or there should be an option to choose the behavior.
+	// Anyway, this is work great if you dont use KeyGenerator behavior(the refresh flag to uniq the key).
+	//
+	// You can try "curl http://127.0.0.1:3000/api/v2/ccbreaker_respond?refresh=true" at the same time in multiple shells
 	h.Apiv2.Use(cache.New(cache.Config{
 		Next:         nil,
 		Expiration:   30 * time.Second,
@@ -184,6 +199,118 @@ func (h *Handler) initRoute() (err error) {
 
 		log.Printf("Response json: %v\n", result)
 		return c.Status(http.StatusOK).JSON(result)
+	})
+
+	// for client retry testing
+	// curl http://127.0.0.1:3000/api/v2/randomnotresponse?refresh=true
+	h.Apiv2.Get("/randomnotresponse", func(c *fiber.Ctx) error {
+		now := time.Now().Format(time.RFC3339Nano)
+
+		log.Println("-----------------")
+		log.Printf("time: %v\n", now)
+		log.Printf(c.Request().Header.String())
+		log.Printf(string(c.Request().Header.Host()))
+		customHeader := c.Get("X-Sample-Header")
+
+		log.Printf("X-Sample-Header> %v\n", customHeader)
+		log.Println("-----------------")
+
+		// randomly response
+		// error 90%
+		if rand.Intn(10) != 0 {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"message": "Randomly error",
+				"time":    now,
+			})
+		}
+
+		return c.Status(http.StatusOK).JSON(fiber.Map{
+			"message": "OK",
+			"time":    now,
+		})
+	})
+
+	// for client circuit breaker testing
+	// the v2 is apply cache middleware that cause the concurrent issue(see **Use "CACHE Middleware" with CAUTION** above)
+	// curl http://127.0.0.1:3000/api/v2/ccbreaker_respond?refresh=true
+	h.Apiv2.Get("/ccbreaker_respond", func(c *fiber.Ctx) error {
+		now := time.Now().Format(time.RFC3339Nano)
+
+		log.Println("-----------------")
+		log.Printf("time: %v\n", now)
+		log.Printf(c.Request().Header.String())
+		log.Printf(string(c.Request().Header.Host()))
+		customHeader := c.Get("X-Sample-Header")
+
+		log.Printf("X-Sample-Header> %v\n", customHeader)
+		log.Println("-----------------")
+
+		// randomly long sleep
+		// 70% long sleep, 30% short sleep
+		if rand.Intn(100) < 70 {
+			log.Printf("LONG SLEEP TASK\n")
+			time.Sleep(30 * time.Second)
+			return c.Status(fiber.StatusOK).JSON(fiber.Map{
+				"message": "long sleep",
+				"time":    now,
+			})
+		}
+
+		log.Printf("SHORT SLEEP TASK\n")
+		return c.Status(http.StatusOK).JSON(fiber.Map{
+			"message": "OK",
+			"time":    now,
+		})
+	})
+
+	// curl http://127.0.0.1:3000/api/v1/ccbreaker_respond
+	h.Apiv1.Get("/ccbreaker_respond", func(c *fiber.Ctx) error {
+		now := time.Now().Format(time.RFC3339Nano)
+		// log.Println("-----------------")
+		// log.Printf("time: %v\n", now)
+		// log.Printf(c.Request().Header.String())
+		// log.Printf(string(c.Request().Header.Host()))
+		// customHeader := c.Get("X-Sample-Header")
+		// log.Printf("X-Sample-Header> %v\n", customHeader)
+		// log.Println("-----------------")
+
+		// randomly long sleep
+		// 70% long sleep, 30% short sleep
+		if rand.Intn(100) < 70 {
+			log.Printf("LONG SLEEP TASK\n")
+			time.Sleep(10 * time.Second)
+			return c.Status(fiber.StatusOK).JSON(fiber.Map{
+				"message": "long sleep",
+				"time":    now,
+			})
+		}
+
+		log.Printf("SHORT SLEEP TASK\n")
+		return c.Status(http.StatusOK).JSON(fiber.Map{
+			"message": "OK",
+			"time":    now,
+		})
+	})
+
+	// Post endoint: expect request with Signature
+	h.Apiv2.Post("/test_signature", func(c *fiber.Ctx) error {
+
+		mySignature := c.Get("X-My-Signature")
+
+		if mySignature == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"message": "X-My-Signature not found! ",
+			})
+		}
+
+		log.Printf("X-My-Signature> %v\n", mySignature)
+
+		// TODO: comparing rxSignature with calSignature(Body)
+		// ... c.Body()
+
+		return c.Status(http.StatusOK).JSON(fiber.Map{
+			"message": "Your signature is: " + mySignature,
+		})
 	})
 
 	// Static files Server
